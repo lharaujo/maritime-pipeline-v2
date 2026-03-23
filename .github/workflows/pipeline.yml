@@ -62,7 +62,14 @@ jobs:
           dbt deps
           dbt build --profiles-dir . --target prod
 
-      - name: 3. Evidence Dashboard Build (Optional Preview)
-        # This step assumes you might want to publish evidence reports later
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 3. Evidence Dashboard Build
+        env:
+          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_SECRET }}
         run: |
-          echo "Evidence build skipped for this iteration - check index.md"
+          npm install
+          npm run build
