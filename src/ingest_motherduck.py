@@ -305,22 +305,40 @@ def fetch_and_filter_ais(year, month, day, tree, port_locodes, port_names):
     url = f"https://coast.noaa.gov/htdata/CMSP/AISDataHandler/{year}/" f"ais-{date_str}.csv.zst"
     logger.info(f"⬇️ Streaming AIS data from {url}...")
 
-    # Use retry_request helper
-    resp = retry_request(url, stream=True, retries=3)
-    if not resp:
-        logger.error(f"❌ Aborting {date_str} due to download failure.")
-        return None
+    csv_buffer = None
+    retries = 3
+    for attempt in range(retries):
+        try:
+            # Use a new session for each attempt to avoid state issues
+            with requests.Session() as s:
+                # Use a longer timeout to accommodate large file downloads
+                resp = s.get(url, stream=True, timeout=60)
+                resp.raise_for_status()  # Check for 4xx/5xx errors
 
-    # Decompress stream in memory
-    dctx = zstd.ZstdDecompressor()
-    with dctx.stream_reader(resp.raw) as reader:
-        # We read in chunks to avoid blowing up 7GB RAM
-        # However, Polars read_csv is efficient. We'll read into a buffer.
-        # Warning: A full day uncompressed can be 5GB+.
-        # Ideally we process line by line, but for speed we use Polars.
-        csv_buffer = io.BytesIO(reader.read())
+                # Decompress stream in memory. The `reader.read()` call is where
+                # an IncompleteRead error can occur if the connection breaks.
+                dctx = zstd.ZstdDecompressor()
+                with dctx.stream_reader(resp.raw) as reader:
+                    csv_buffer = io.BytesIO(reader.read())
 
-    logger.info("📦 Data downloaded. Parsing CSV...")
+                # If we successfully read, break the loop
+                logger.info("📦 Data downloaded and decompressed successfully.")
+                break
+
+        except (requests.exceptions.RequestException, zstd.ZstdError) as e:
+            # Catches connection errors, timeouts, incomplete reads, and decompression errors
+            logger.warning(
+                f"Attempt {attempt + 1}/{retries} failed to download/decompress {url}: {e}"
+            )
+            if attempt < retries - 1:
+                time.sleep(2 ** (attempt + 1))  # Exponential backoff (2, 4 seconds)
+            else:
+                logger.error(
+                    f"❌ Aborting {date_str} due to persistent download/decompression failure."
+                )
+                return None
+
+    logger.info("Parsing CSV...")
 
     # Read with Polars (Zero local disk write)
     try:
