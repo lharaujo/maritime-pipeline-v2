@@ -6,4 +6,5 @@ SELECT
     latitude as lat,
     longitude as lon,
     dep_time
+
 FROM {{ source('motherduck', 'raw_ais_pings') }}
