@@ -11,7 +11,7 @@ requires-python = ">=3.12"
 authors = [{ name = "Your Name", email = "your.email@example.com" }]
 dependencies = [
     "polars>=0.20.0",
-    "duckdb>=0.10.0",
+    "duckdb==1.4.4",
     "dbt-duckdb>=1.8.0",
     "pandas>=2.2.0",
     "pyarrow>=15.0.0",
