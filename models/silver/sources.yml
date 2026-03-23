@@ -1,0 +1,10 @@
+version: 2
+
+sources:
+  - name: motherduck
+    database: my_voyage_db
+    schema: silver
+    description: "Raw data ingested from NOAA AIS files"
+    tables:
+      - name: raw_ais_pings
+        description: "Filtered AIS pings near ports"
