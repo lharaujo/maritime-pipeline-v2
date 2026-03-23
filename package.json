@@ -1,0 +1,13 @@
+{
+  "name": "maritime-dashboard",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "evidence dev",
+    "build": "evidence build",
+    "sources": "evidence sources"
+  },
+  "dependencies": {
+    "@evidence-dev/core": "^3.0.0",
+    "@evidence-dev/duckdb": "^1.0.0"
+  }
+}

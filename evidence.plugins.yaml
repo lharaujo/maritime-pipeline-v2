@@ -1,0 +1,5 @@
+sources:
+  my_voyage_db:
+    type: duckdb
+    # We use the MotherDuck connection string (handled via env var in pipeline)
+    filename: "md:"

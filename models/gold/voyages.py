@@ -6,11 +6,32 @@ import json
 def model(dbt, con):
     dbt.config(materialized="incremental", unique_key=["mmsi", "dep_time", "arr_time"])
 
-    # 1. Load Staging Data
-    # We reference the silver view we just created
-    df = dbt.ref("stg_ais").pl()
+    # 1. Incremental Logic
+    # If the table exists, find the latest arrival time to only process new voyages.
+    # We look back 14 days to ensure we catch the start of voyages that just completed.
+    cutoff_sql = ""
+    if dbt.is_incremental:
+        try:
+            # 'dbt.this' refers to the current table (main_gold.voyages)
+            # We use the existing connection to query it.
+            target_name = str(dbt.this)
+            res = con.execute(f"SELECT MAX(arr_time) FROM {target_name}").fetchone()
+            if res and res[0]:
+                cutoff_date = res[0] - pd.Timedelta(days=14)
+                cutoff_sql = f"WHERE dep_time >= '{cutoff_date}'"
+        except Exception:
+            # Table likely doesn't exist yet, run full load
+            pass
 
-    # 2. Window Functions (Stitching)
+    # 2. Load Staging Data (Filtered)
+    # We execute SQL on the connection to filter *before* loading data into memory/Polars
+    source_table = dbt.ref("stg_ais")
+    df = con.sql(f"SELECT * FROM {source_table} {cutoff_sql}").pl()
+
+    if df.height == 0:
+        return df.to_pandas()
+
+    # 3. Window Functions (Stitching)
     # We identify port changes using SQL on the Polars frame via DuckDB
     q = """
     WITH unique_port_visits AS (
@@ -41,7 +62,7 @@ def model(dbt, con):
     if voyages.empty:
         return voyages
 
-    # 3. Enrichment (SeaRoute)
+    # 4. Enrichment (SeaRoute)
     def get_route(row):
         try:
             origin = [row["dep_lon"], row["dep_lat"]]

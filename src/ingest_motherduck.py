@@ -9,7 +9,7 @@ import polars as pl
 import numpy as np
 import duckdb
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from scipy.spatial import KDTree
 
@@ -32,7 +32,7 @@ logger = logging.getLogger("ais_ingest")
 def get_db_connection():
     if not MOTHERDUCK_TOKEN:
         raise ValueError("MOTHERDUCK_TOKEN not found in environment variables")
-    logger.info(f"Connecting to MotherDuck with DuckDB {duckdb.__version__}...")
+    logger.debug(f"Connecting to MotherDuck with DuckDB {duckdb.__version__}...")
     con = duckdb.connect(MD_CONN_STR)
 
     con.execute("CREATE DATABASE IF NOT EXISTS my_voyage_db")
@@ -114,7 +114,7 @@ def scrape_iso_countries(con):
     con.execute(f"CREATE TABLE {COUNTRIES_TABLE} (code VARCHAR, updated_at TIMESTAMP)")
 
     # Insert in batches or simple loop
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     data = [(code, now) for code in sorted_codes]
     con.executemany(f"INSERT INTO {COUNTRIES_TABLE} VALUES (?, ?)", data)
 
@@ -200,7 +200,9 @@ def scrape_ports(con, iso_codes):
     )
 
     # Create Polars DF for bulk insert
-    df = pl.DataFrame(all_ports).with_columns(pl.lit(datetime.now()).alias("updated_at"))
+    df = pl.DataFrame(all_ports).with_columns(
+        pl.lit(datetime.now(timezone.utc)).alias("updated_at")
+    )
     con.register("df_ports_new", df)
     con.execute(f"INSERT INTO {PORTS_TABLE} SELECT * FROM df_ports_new")
     con.unregister("df_ports_new")
@@ -396,17 +398,23 @@ def fetch_and_filter_ais(year, month, day, tree, port_locodes, port_names):
     return filtered_ais
 
 
-def process_date(con, target_date, tree, locodes, names):
+def process_date(target_date, tree, locodes, names):
     """Ingests a single day of data."""
     logger.info(f"🚀 Starting Ingest for {target_date.date()}")
+
+    # Create a fresh connection for this thread to ensure thread safety
+    con = get_db_connection()
     try:
         df_filtered = fetch_and_filter_ais(
             target_date.year, target_date.month, target_date.day, tree, locodes, names
         )
 
         if df_filtered is not None and not df_filtered.is_empty():
-            logger.info("📤 Uploading to MotherDuck...")
-            # Create table if not exists
+            logger.info(
+                f"📤 Uploading {df_filtered.height} rows for {target_date.date()} to MotherDuck..."
+            )
+
+            # Ensure table exists (idempotent)
             con.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {RAW_AIS_TABLE} (
@@ -429,6 +437,8 @@ def process_date(con, target_date, tree, locodes, names):
             logger.info(f"⚠️ No data to ingest for {target_date.date()}.")
     except Exception as e:
         logger.error(f"❌ Failed to process {target_date.date()}: {e}")
+    finally:
+        con.close()
 
 
 def main():
@@ -447,6 +457,19 @@ def main():
     ensure_reference_data(con)
     tree, locodes, names = load_ports_for_kdtree(con)
 
+    # Ensure the destination table exists at least once before threading
+    con.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {RAW_AIS_TABLE} (
+            mmsi BIGINT, imo VARCHAR, vessel_name VARCHAR,
+            latitude DOUBLE, longitude DOUBLE,
+            dep_time TIMESTAMP, port_locode VARCHAR,
+            ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    con.close()  # Close main connection, threads will open their own
+
     # Date Logic
     if args.year and args.month and args.day:
         start_date = datetime(args.year, args.month, args.day)
@@ -463,19 +486,30 @@ def main():
         end_date = datetime(args.year, 12, 31)
     else:
         # Default: Yesterday
-        start_date = datetime.utcnow() - timedelta(days=1)
+        start_date = datetime.now(timezone.utc) - timedelta(days=1)
         end_date = start_date
 
     # Prevent future dates
-    if end_date > datetime.utcnow():
-        end_date = datetime.utcnow() - timedelta(days=1)
+    if end_date > datetime.now(timezone.utc):
+        end_date = datetime.now(timezone.utc) - timedelta(days=1)
 
     logger.info(f"📅 Running pipeline from {start_date.date()} to {end_date.date()}")
 
-    current = start_date
-    while current <= end_date:
-        process_date(con, current, tree, locodes, names)
-        current += timedelta(days=1)
+    # Generate list of dates to process
+    dates_to_process = []
+    curr = start_date
+    while curr <= end_date:
+        dates_to_process.append(curr)
+        curr += timedelta(days=1)
+
+    # Process in parallel (Max 2 workers to prevent OOM on 7GB RAM runners)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(process_date, d, tree, locodes, names) for d in dates_to_process]
+        for fut in as_completed(futures):
+            try:
+                fut.result()
+            except Exception as e:
+                logger.error(f"Thread failed: {e}")
 
 
 if __name__ == "__main__":
