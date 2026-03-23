@@ -3,7 +3,7 @@ title: Maritime Logistics Tracker
 ---
 
 ```sql voyages_last_30d
-select 
+select
     vessel_name,
     dep_locode,
     arr_locode,
