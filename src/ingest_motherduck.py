@@ -1,6 +1,8 @@
 # src/ingest_motherduck.py
 import os
 import argparse
+import logging
+import time
 import io
 import zstandard as zstd
 import polars as pl
@@ -8,23 +10,29 @@ import numpy as np
 import duckdb
 import requests
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from scipy.spatial import KDTree
 
 # We import simple utils, ignoring the Modal decorators in the original file
 # effectively
 from src.geospacial import to_radians
+from src.constants import PORT_STATUS_CODES, PORT_FUNCTION_FILTER
 
 # --- CONFIG ---
 MD_CONN_STR = "md:"
 MOTHERDUCK_TOKEN = os.environ.get("MOTHERDUCK_TOKEN", "").strip()
+COUNTRIES_TABLE = "reference.countries"
 PORTS_TABLE = "reference.ports"
 RAW_AIS_TABLE = "silver.raw_ais_pings"
+
+# --- LOGGING SETUP ---
+logger = logging.getLogger("ais_ingest")
 
 
 def get_db_connection():
     if not MOTHERDUCK_TOKEN:
         raise ValueError("MOTHERDUCK_TOKEN not found in environment variables")
-    print(f"🔌 Connecting to MotherDuck with DuckDB {duckdb.__version__}...")
+    logger.info(f"Connecting to MotherDuck with DuckDB {duckdb.__version__}...")
     con = duckdb.connect(MD_CONN_STR)
 
     con.execute("CREATE DATABASE IF NOT EXISTS my_voyage_db")
@@ -32,24 +40,226 @@ def get_db_connection():
     return con
 
 
-def ensure_ports_exist(con):
+def retry_request(url, headers=None, retries=3, stream=False):
+    """Helper to fetch URL with retries."""
+    for attempt in range(retries):
+        try:
+            resp = requests.get(url, headers=headers, stream=stream, timeout=20)
+            if resp.status_code == 200:
+                return resp
+            logger.warning(
+                f"Attempt {attempt+1}/{retries} failed for {url}: Status {resp.status_code}"
+            )
+        except Exception as e:
+            logger.warning(f"Attempt {attempt+1}/{retries} error for {url}: {e}")
+
+        if attempt < retries - 1:
+            time.sleep(2**attempt)  # Exponential backoff
+
+    logger.error(f"Failed to fetch {url} after {retries} attempts.")
+    return None
+
+
+def parse_unece_coord(coord_str):
+    """Parses UNECE coordinate string (e.g., '5157N', '00408E') into float."""
+    if not coord_str or len(coord_str) < 5:
+        return None
+    try:
+        factor = -1 if coord_str[-1] in ["S", "W"] else 1
+
+        # Format is D...M...X
+        # Lat: 2 digits deg, 2 digits min. Lon: 3 digits deg, 2 digits min.
+        minutes = float(coord_str[-3:-1])
+        degrees = float(coord_str[:-3])
+
+        return (degrees + (minutes / 60.0)) * factor
+    except Exception:
+        return None
+
+
+def scrape_iso_countries(con):
+    """Scrapes ISO 3166-2 country codes from Wikipedia."""
+    from bs4 import BeautifulSoup
+
+    logger.info("📖 Scraping ISO country codes from Wikipedia...")
+    url = "https://en.wikipedia.org/wiki/ISO_3166-2"
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    resp = retry_request(url, headers=headers)
+    if not resp:
+        raise RuntimeError("Could not fetch ISO codes.")
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    h2 = soup.find("h2", {"id": "Current_codes"})
+    if not h2:
+        # Fallback to hardcoded major countries if scraping fails structure
+        logger.error("Could not find 'Current_codes' section. Wiki format may have changed.")
+        return []
+
+    table = h2.find_next("table")
+    iso_codes = set()
+
+    for tr in table.find_all("tr")[1:]:
+        cols = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
+        if cols:
+            code = cols[0]
+            if len(code) == 2 and code.isupper():
+                iso_codes.add(code)
+
+    sorted_codes = sorted(list(iso_codes))
+    logger.info(f"✅ Found {len(sorted_codes)} ISO country codes.")
+
+    # Save to DB
+    con.execute(f"DROP TABLE IF EXISTS {COUNTRIES_TABLE}")
+    con.execute(f"CREATE TABLE {COUNTRIES_TABLE} (code VARCHAR, updated_at TIMESTAMP)")
+
+    # Insert in batches or simple loop
+    now = datetime.now()
+    data = [(code, now) for code in sorted_codes]
+    con.executemany(f"INSERT INTO {COUNTRIES_TABLE} VALUES (?, ?)", data)
+
+    return sorted_codes
+
+
+def scrape_ports(con, iso_codes):
+    """Scrapes UN/LOCODE ports for the given country codes."""
+    from bs4 import BeautifulSoup
+
+    logger.info(f"⚓ Scraping ports for {len(iso_codes)} countries...")
+    headers = {"User-Agent": "Mozilla/5.0"}
+    all_ports = []
+
+    def fetch_country_ports(iso):
+        url = f"https://service.unece.org/trade/locode/{iso.lower()}.htm"
+        resp = retry_request(url, headers=headers, retries=3)
+        if not resp:
+            return []
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        rows = soup.find_all("tr")
+        country_ports = []
+
+        for tr in rows[10:]:  # Skip header rows
+            cells = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
+            if len(cells) < 10:
+                continue
+
+            # Format: ' AR ', ' BLA ' -> 'ARBLA'
+            locode_raw = cells[1].replace("\xa0", "").replace(" ", "").upper()
+
+            if not locode_raw or len(locode_raw) < 3:
+                continue
+
+            full_locode = f"{iso}{locode_raw}" if len(locode_raw) == 3 else locode_raw
+            name = cells[2]
+            function = cells[5]
+            status = cells[6].strip()
+            coords_str = cells[9].strip()
+
+            # Filters
+            if PORT_FUNCTION_FILTER not in function:
+                continue
+            if status[:2] not in PORT_STATUS_CODES:
+                continue
+            if not coords_str:
+                continue
+
+            lat = parse_unece_coord(coords_str.split(" ")[0])
+            lon = parse_unece_coord(coords_str.split(" ")[1]) if " " in coords_str else None
+
+            if lat is not None and lon is not None:
+                country_ports.append({"LOCODE": full_locode, "Name": name, "lat": lat, "lon": lon})
+        return country_ports
+
+    # Parallel scraping
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_iso = {executor.submit(fetch_country_ports, iso): iso for iso in iso_codes}
+        for i, future in enumerate(as_completed(future_to_iso)):
+            if i % 10 == 0:
+                logger.info(f"Progress: {i}/{len(iso_codes)} countries processed...")
+            res = future.result()
+            if res:
+                all_ports.extend(res)
+
+    if not all_ports:
+        logger.error("No ports scraped!")
+        return False
+
+    logger.info(f"✅ Extracted {len(all_ports)} total ports. Saving to DB...")
+
+    # Save to DuckDB
+    con.execute(f"DROP TABLE IF EXISTS {PORTS_TABLE}")
+    con.execute(
+        f"""
+        CREATE TABLE {PORTS_TABLE} (
+            LOCODE VARCHAR, Name VARCHAR,
+            lat DOUBLE, lon DOUBLE,
+            updated_at TIMESTAMP
+        )
+        """
+    )
+
+    # Create Polars DF for bulk insert
+    df = pl.DataFrame(all_ports).with_columns(pl.lit(datetime.now()).alias("updated_at"))
+    con.register("df_ports_new", df)
+    con.execute(f"INSERT INTO {PORTS_TABLE} SELECT * FROM df_ports_new")
+    con.unregister("df_ports_new")
+
+    return True
+
+
+def ensure_reference_data(con):
     """Checks if ports exist in MotherDuck; if not, bootstraps them."""
     con.execute("CREATE SCHEMA IF NOT EXISTS reference")
     con.execute("CREATE SCHEMA IF NOT EXISTS silver")
 
+    # 1. Check Countries (Update yearly)
     try:
-        count = con.sql(f"SELECT COUNT(*) FROM {PORTS_TABLE}").fetchone()[0]
-        print(f"✅ Found {count} ports in MotherDuck.")
-    except duckdb.CatalogException:
-        print("⚠️ Ports table not found. Bootstrapping with major ports...")
+        res = con.sql(f"SELECT MAX(updated_at) FROM {COUNTRIES_TABLE}").fetchone()
+        last_country_update = res[0] if res else None
+    except Exception:
+        last_country_update = None
 
+    iso_codes = []
+    if not last_country_update or (datetime.now() - last_country_update).days > 365:
+        logger.info("Countries table missing or stale (>1 year). Updating...")
+        iso_codes = scrape_iso_countries(con)
+    else:
+        logger.info("✅ Countries table is up to date.")
+        iso_codes = [r[0] for r in con.sql(f"SELECT code FROM {COUNTRIES_TABLE}").fetchall()]
+
+    # 2. Check Ports (Update every 6 months)
+    try:
+        res = con.sql(f"SELECT MAX(updated_at) FROM {PORTS_TABLE}").fetchone()
+        last_port_update = res[0] if res else None
+    except Exception:
+        last_port_update = None
+
+    if not last_port_update or (datetime.now() - last_port_update).days > 180:
+        logger.info("Ports table missing or stale (>6 months). Updating...")
+        success = scrape_ports(con, iso_codes)
+        if not success:
+            logger.error("Scraping failed. Checking for existing data...")
+            # If scraping failed entirely and we have no table, we must fallback
+            try:
+                count = con.sql(f"SELECT COUNT(*) FROM {PORTS_TABLE}").fetchone()[0]
+                if count > 0:
+                    logger.warning("Using existing stale data.")
+                    return
+            except Exception:
+                pass
+
+            logger.warning(
+                "⚠️ No ports available. Bootstrapping with HARDCODED major ports as fallback."
+            )
         con.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {PORTS_TABLE} (
                 LOCODE VARCHAR,
                 Name VARCHAR,
                 lat DOUBLE,
-                lon DOUBLE
+                lon DOUBLE,
+                updated_at TIMESTAMP
             )
         """
         )
@@ -59,21 +269,23 @@ def ensure_ports_exist(con):
         con.execute(
             f"""
             INSERT INTO {PORTS_TABLE} VALUES
-            ('NLRTM', 'Rotterdam', 51.95, 4.13),
-            ('SGSIN', 'Singapore', 1.28, 103.85),
-            ('CNSHA', 'Shanghai', 31.23, 121.47),
-            ('CNNGB', 'Ningbo', 29.86, 121.52),
-            ('KRPUS', 'Busan', 35.10, 129.04),
-            ('USLAX', 'Los Angeles', 33.74, -118.26),
-            ('USLGB', 'Long Beach', 33.77, -118.19),
-            ('USNYC', 'New York', 40.71, -74.00),
-            ('DEHAM', 'Hamburg', 53.55, 9.99),
-            ('BEANR', 'Antwerp', 51.22, 4.40),
-            ('JPTYO', 'Tokyo', 35.68, 139.76),
-            ('AEJEA', 'Jebel Ali', 25.00, 55.06)
+            ('NLRTM', 'Rotterdam', 51.95, 4.13, CURRENT_TIMESTAMP),
+            ('SGSIN', 'Singapore', 1.28, 103.85, CURRENT_TIMESTAMP),
+            ('CNSHA', 'Shanghai', 31.23, 121.47, CURRENT_TIMESTAMP),
+            ('CNNGB', 'Ningbo', 29.86, 121.52, CURRENT_TIMESTAMP),
+            ('KRPUS', 'Busan', 35.10, 129.04, CURRENT_TIMESTAMP),
+            ('USLAX', 'Los Angeles', 33.74, -118.26, CURRENT_TIMESTAMP),
+            ('USLGB', 'Long Beach', 33.77, -118.19, CURRENT_TIMESTAMP),
+            ('USNYC', 'New York', 40.71, -74.00, CURRENT_TIMESTAMP),
+            ('DEHAM', 'Hamburg', 53.55, 9.99, CURRENT_TIMESTAMP),
+            ('BEANR', 'Antwerp', 51.22, 4.40, CURRENT_TIMESTAMP),
+            ('JPTYO', 'Tokyo', 35.68, 139.76, CURRENT_TIMESTAMP),
+            ('AEJEA', 'Jebel Ali', 25.00, 55.06, CURRENT_TIMESTAMP)
         """
         )
-        print("✅ Bootstrapped ports table with major global hubs.")
+        logger.info("✅ Bootstrapped ports table with major global hubs.")
+    else:
+        logger.info("✅ Ports table is up to date.")
 
 
 def load_ports_for_kdtree(con):
@@ -91,24 +303,24 @@ def load_ports_for_kdtree(con):
 def fetch_and_filter_ais(year, month, day, tree, port_locodes, port_names):
     date_str = f"{year}-{month:02d}-{day:02d}"
     url = f"https://coast.noaa.gov/htdata/CMSP/AISDataHandler/{year}/" f"ais-{date_str}.csv.zst"
-    print(f"⬇️ Streaming AIS data from {url}...")
+    logger.info(f"⬇️ Streaming AIS data from {url}...")
 
-    with requests.Session() as s:
-        resp = s.get(url, stream=True)
-        if resp.status_code != 200:
-            print(f"⚠️ Failed to fetch {url}: {resp.status_code}")
-            return None
+    # Use retry_request helper
+    resp = retry_request(url, stream=True, retries=3)
+    if not resp:
+        logger.error(f"❌ Aborting {date_str} due to download failure.")
+        return None
 
-        # Decompress stream in memory
-        dctx = zstd.ZstdDecompressor()
-        with dctx.stream_reader(resp.raw) as reader:
-            # We read in chunks to avoid blowing up 7GB RAM
-            # However, Polars read_csv is efficient. We'll read into a buffer.
-            # Warning: A full day uncompressed can be 5GB+.
-            # Ideally we process line by line, but for speed we use Polars.
-            csv_buffer = io.BytesIO(reader.read())
+    # Decompress stream in memory
+    dctx = zstd.ZstdDecompressor()
+    with dctx.stream_reader(resp.raw) as reader:
+        # We read in chunks to avoid blowing up 7GB RAM
+        # However, Polars read_csv is efficient. We'll read into a buffer.
+        # Warning: A full day uncompressed can be 5GB+.
+        # Ideally we process line by line, but for speed we use Polars.
+        csv_buffer = io.BytesIO(reader.read())
 
-    print("📦 Data downloaded. Parsing CSV...")
+    logger.info("📦 Data downloaded. Parsing CSV...")
 
     # Read with Polars (Zero local disk write)
     try:
@@ -125,7 +337,7 @@ def fetch_and_filter_ais(year, month, day, tree, port_locodes, port_names):
             ignore_errors=True,
         )
     except Exception as e:
-        print(f"❌ Failed to parse CSV: {e}")
+        logger.error(f"❌ Failed to parse CSV: {e}")
         return None
 
     # Filter Nulls
@@ -134,7 +346,7 @@ def fetch_and_filter_ais(year, month, day, tree, port_locodes, port_names):
     if ais.height == 0:
         return None
 
-    print(f"🔎 Filtering {ais.height} pings against {len(port_locodes)} ports...")
+    logger.info(f"🔎 Filtering {ais.height} pings against {len(port_locodes)} ports...")
 
     # Coordinate Transform & KDTree Query
     ship_coords = to_radians(ais)  # Uses your existing util
@@ -145,7 +357,7 @@ def fetch_and_filter_ais(year, month, day, tree, port_locodes, port_names):
     mask = (dist * 6371.0) <= 5.0
 
     if not mask.any():
-        print("No pings near ports found.")
+        logger.info("No pings near ports found.")
         return None
 
     valid_idx = idx[mask]
@@ -162,20 +374,20 @@ def fetch_and_filter_ais(year, month, day, tree, port_locodes, port_names):
         ]
     ).select(["mmsi", "imo", "vessel_name", "latitude", "longitude", "dep_time", "port_locode"])
 
-    print(f"✅ Retained {filtered_ais.height} relevant pings.")
+    logger.info(f"✅ Retained {filtered_ais.height} relevant pings.")
     return filtered_ais
 
 
 def process_date(con, target_date, tree, locodes, names):
     """Ingests a single day of data."""
-    print(f"🚀 Starting Ingest for {target_date.date()}")
+    logger.info(f"🚀 Starting Ingest for {target_date.date()}")
     try:
         df_filtered = fetch_and_filter_ais(
             target_date.year, target_date.month, target_date.day, tree, locodes, names
         )
 
         if df_filtered is not None and not df_filtered.is_empty():
-            print("📤 Uploading to MotherDuck...")
+            logger.info("📤 Uploading to MotherDuck...")
             # Create table if not exists
             con.execute(
                 f"""
@@ -194,14 +406,19 @@ def process_date(con, target_date, tree, locodes, names):
 
             # Insert Data
             con.sql(f"INSERT INTO {RAW_AIS_TABLE} SELECT *, CURRENT_TIMESTAMP FROM df_filtered")
-            print(f"🎉 Ingestion Complete for {target_date.date()}.")
+            logger.info(f"🎉 Ingestion Complete for {target_date.date()}.")
         else:
-            print(f"⚠️ No data to ingest for {target_date.date()}.")
+            logger.info(f"⚠️ No data to ingest for {target_date.date()}.")
     except Exception as e:
-        print(f"❌ Failed to process {target_date.date()}: {e}")
+        logger.error(f"❌ Failed to process {target_date.date()}: {e}")
 
 
 def main():
+    # Set logging config
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    )
+
     parser = argparse.ArgumentParser(description="Ingest AIS Data to MotherDuck")
     parser.add_argument("--year", type=int, help="Year (YYYY)")
     parser.add_argument("--month", type=int, help="Month (1-12)")
@@ -209,7 +426,7 @@ def main():
     args = parser.parse_args()
 
     con = get_db_connection()
-    ensure_ports_exist(con)
+    ensure_reference_data(con)
     tree, locodes, names = load_ports_for_kdtree(con)
 
     # Date Logic
@@ -235,7 +452,7 @@ def main():
     if end_date > datetime.utcnow():
         end_date = datetime.utcnow() - timedelta(days=1)
 
-    print(f"📅 Running pipeline from {start_date.date()} to {end_date.date()}")
+    logger.info(f"📅 Running pipeline from {start_date.date()} to {end_date.date()}")
 
     current = start_date
     while current <= end_date:
