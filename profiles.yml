@@ -1,12 +1,10 @@
-# profiles.yml
 maritime_pipeline:
   target: prod
   outputs:
     prod:
       type: duckdb
-      path: 'md:my_voyage_db'  # Connects to MotherDuck
-      schema: gold
+      # Connect to the MotherDuck database we created in ingestion
+      path: 'md:my_voyage_db'
+      schema: main
       threads: 4
-      extensions:
-        - httpfs
-        - spatial
+      token: '{{ env_var("MOTHERDUCK_TOKEN") }}'
