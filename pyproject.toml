@@ -21,6 +21,7 @@ dependencies = [
     "zstandard>=0.22.0",
     "scipy>=1.17.1",
     "python-dotenv>=1.2.2",
+    "beautifulsoup4>=4.14.1"
 ]
 
 [project.optional-dependencies]
