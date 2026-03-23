@@ -4,7 +4,17 @@ name: Maritime Data Pipeline
 on:
   schedule:
     - cron: '0 0 * * *'  # Run daily at midnight UTC
-  workflow_dispatch:      # Manual trigger
+  workflow_dispatch:
+    inputs:
+      year:
+        description: 'Year (YYYY) - e.g. 2025'
+        required: false
+      month:
+        description: 'Month (1-12) - Optional'
+        required: false
+      day:
+        description: 'Day (1-31) - Optional'
+        required: false
 
 env:
   MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
@@ -31,10 +41,19 @@ jobs:
 
       - name: 1. Ingest AIS Data (Extract & Load)
         env:
-          # Default to yesterday if not specified
-          TARGET_DATE: "yesterday" 
+          YEAR: ${{ inputs.year }}
+          MONTH: ${{ inputs.month }}
+          DAY: ${{ inputs.day }}
         run: |
-          python src/ingest_motherduck.py
+          # Construct command based on inputs
+          CMD="python src/ingest_motherduck.py"
+
+          if [ -n "$YEAR" ]; then CMD="$CMD --year $YEAR"; fi
+          if [ -n "$MONTH" ]; then CMD="$CMD --month $MONTH"; fi
+          if [ -n "$DAY" ]; then CMD="$CMD --day $DAY"; fi
+
+          echo "Running: $CMD"
+          $CMD
 
       - name: 2. Transform Data (dbt)
         run: |
