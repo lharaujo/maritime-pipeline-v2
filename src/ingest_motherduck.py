@@ -15,7 +15,7 @@ from scipy.spatial import KDTree
 from src.geospacial import to_radians
 
 # --- CONFIG ---
-MD_CONN_STR = "md:my_voyage_db"
+MD_CONN_STR = "md:"
 MOTHERDUCK_TOKEN = os.environ.get("MOTHERDUCK_TOKEN")
 PORTS_TABLE = "reference.ports"
 RAW_AIS_TABLE = "silver.raw_ais_pings"
@@ -24,7 +24,10 @@ RAW_AIS_TABLE = "silver.raw_ais_pings"
 def get_db_connection():
     if not MOTHERDUCK_TOKEN:
         raise ValueError("MOTHERDUCK_TOKEN not found in environment variables")
-    return duckdb.connect(MD_CONN_STR)
+    con = duckdb.connect(MD_CONN_STR)
+    con.execute("CREATE DATABASE IF NOT EXISTS my_voyage_db")
+    con.execute("USE my_voyage_db")
+    return con
 
 
 def ensure_ports_exist(con):
