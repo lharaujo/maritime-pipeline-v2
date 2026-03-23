@@ -472,18 +472,20 @@ def main():
 
     # Date Logic
     if args.year and args.month and args.day:
-        start_date = datetime(args.year, args.month, args.day)
+        start_date = datetime(args.year, args.month, args.day, tzinfo=timezone.utc)
         end_date = start_date
     elif args.year and args.month:
-        start_date = datetime(args.year, args.month, 1)
+        start_date = datetime(args.year, args.month, 1, tzinfo=timezone.utc)
         # Logic to find last day of month
         if args.month == 12:
-            end_date = datetime(args.year, 12, 31)
+            end_date = datetime(args.year, 12, 31, tzinfo=timezone.utc)
         else:
-            end_date = datetime(args.year, args.month + 1, 1) - timedelta(days=1)
+            end_date = datetime(args.year, args.month + 1, 1, tzinfo=timezone.utc) - timedelta(
+                days=1
+            )
     elif args.year:
-        start_date = datetime(args.year, 1, 1)
-        end_date = datetime(args.year, 12, 31)
+        start_date = datetime(args.year, 1, 1, tzinfo=timezone.utc)
+        end_date = datetime(args.year, 12, 31, tzinfo=timezone.utc)
     else:
         # Default: Yesterday
         start_date = datetime.now(timezone.utc) - timedelta(days=1)
