@@ -5,27 +5,22 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ais-voyage-engine"
 version = "0.1.0"
-description = "A cloud-native AIS data pipeline using Modal, Polars, and DuckDB."
+description = "A cloud-native AIS data pipeline using MotherDuck, dbt, and Polars."
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "Your Name", email = "your.email@example.com" }]
 dependencies = [
     "polars>=0.20.0",
     "duckdb>=0.10.0",
-    "modal>=0.62.0",
+    "dbt-duckdb>=1.8.0",
+    "pandas>=2.2.0",
+    "pyarrow>=15.0.0",
     "requests>=2.31.0",
     "numpy>=1.26.0",
     "searoute>=1.1.0",
-    "streamlit>=1.32.0",
-    "pydeck>=0.8.0",
-    "plotly>=5.18.0",
     "zstandard>=0.22.0",
-    "beautifulsoup4>=4.12.0",
-    "tqdm>=4.67.3",
     "scipy>=1.17.1",
     "python-dotenv>=1.2.2",
-    "folium>=0.14.0",
-    "streamlit-folium>=0.13.0",
 ]
 
 [project.optional-dependencies]
@@ -48,25 +43,3 @@ line_length = 100
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-
-[tool.poetry]
-package-mode = false
-
-[tool.poetry.dependencies]
-python = ">=3.12"
-polars = ">=0.20.0"
-duckdb = ">=0.10.0"
-modal = ">=0.62.0"
-requests = ">=2.31.0"
-numpy = ">=1.26.0"
-searoute = ">=1.1.0"
-streamlit = ">=1.32.0"
-pydeck = ">=0.8.0"
-plotly = ">=5.18.0"
-zstandard = ">=0.22.0"
-beautifulsoup4 = ">=4.12.0"
-tqdm = ">=4.67.3"
-scipy = ">=1.17.1"
-python-dotenv = ">=1.2.2"
-folium = ">=0.14.0"
-streamlit-folium = ">=0.13.0"
