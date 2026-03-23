@@ -1,0 +1,12 @@
+# profiles.yml
+maritime_pipeline:
+  target: prod
+  outputs:
+    prod:
+      type: duckdb
+      path: 'md:my_voyage_db'  # Connects to MotherDuck
+      schema: gold
+      threads: 4
+      extensions:
+        - httpfs
+        - spatial
