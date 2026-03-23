@@ -17,7 +17,7 @@ on:
         required: false
 
 env:
-  MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
+  MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_SECRET }}
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   PYTHON_VERSION: '3.12'
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -42,6 +42,7 @@ jobs:
 
       - name: 1. Ingest AIS Data (Extract & Load)
         env:
+          MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_SECRET }}
           YEAR: ${{ inputs.year }}
           MONTH: ${{ inputs.month }}
           DAY: ${{ inputs.day }}
