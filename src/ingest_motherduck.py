@@ -41,18 +41,39 @@ def ensure_ports_exist(con):
         count = con.sql(f"SELECT COUNT(*) FROM {PORTS_TABLE}").fetchone()[0]
         print(f"✅ Found {count} ports in MotherDuck.")
     except duckdb.CatalogException:
-        print("⚠️ Ports table not found. Bootstrapping...")
-        # We need to adapt the scraping logic to return a DataFrame instead of saving
-        # parquet. For simplicity in this refactor, let's assume we scrape and load
-        # to MD. In a real scenario, you'd call your scrape function here.
-        # Placeholder for the scrape logic:
-        print("⏳ Scraping ports (Simulated call to existing logic)...")
-        # NOTE: You would port the logic from src/extract.py here,
-        # but modify it to return a Polars DF instead of writing parquet.
-        # For now, let's assume the ports table is populated or we fail gracefully.
-        raise RuntimeError(
-            "Ports table missing. Please run initial bootstrap locally or port " "scraping logic."
+        print("⚠️ Ports table not found. Bootstrapping with major ports...")
+
+        con.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {PORTS_TABLE} (
+                LOCODE VARCHAR,
+                Name VARCHAR,
+                lat DOUBLE,
+                lon DOUBLE
+            )
+        """
         )
+
+        # Insert major ports to ensure the pipeline functions on first run
+        # (Rotterdam, Singapore, Shanghai, Los Angeles, New York, etc.)
+        con.execute(
+            f"""
+            INSERT INTO {PORTS_TABLE} VALUES
+            ('NLRTM', 'Rotterdam', 51.95, 4.13),
+            ('SGSIN', 'Singapore', 1.28, 103.85),
+            ('CNSHA', 'Shanghai', 31.23, 121.47),
+            ('CNNGB', 'Ningbo', 29.86, 121.52),
+            ('KRPUS', 'Busan', 35.10, 129.04),
+            ('USLAX', 'Los Angeles', 33.74, -118.26),
+            ('USLGB', 'Long Beach', 33.77, -118.19),
+            ('USNYC', 'New York', 40.71, -74.00),
+            ('DEHAM', 'Hamburg', 53.55, 9.99),
+            ('BEANR', 'Antwerp', 51.22, 4.40),
+            ('JPTYO', 'Tokyo', 35.68, 139.76),
+            ('AEJEA', 'Jebel Ali', 25.00, 55.06)
+        """
+        )
+        print("✅ Bootstrapped ports table with major global hubs.")
 
 
 def load_ports_for_kdtree(con):
