@@ -75,19 +75,12 @@ jobs:
       - name: 3. Evidence Dashboard Build
         if: always() # Attempt build even if previous steps had partial failures
         run: |
-          echo "🧹 Cleaning npm environment..."
-          rm -rf node_modules package-lock.json
-          npm cache clean --force
-
-          echo "📦 Installing dependencies..."
-          npm install --loglevel=error
-
-          echo "🔍 DEBUG: Listing executables in .bin:"
-          ls -la node_modules/.bin || echo "⚠️ .bin folder not found"
-
-          echo "🚀 Building Dashboard..."
-          # Bypass npm run script and use npx to locate the binary reliably
-          npx --no-install evidence build
+          # Force a clean install of dependencies
+          npm install
+          # Ensure binary is present by explicitly adding it (fixes missing bin issue)
+          npm install evidence@^3.0.0
+          # Run the standard build script defined in package.json
+          npm run build
 
       - name: Upload Evidence Artifact
         uses: actions/upload-pages-artifact@v3
