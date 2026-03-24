@@ -22,3 +22,7 @@ models:
     gold:
       +materialized: incremental
       +schema: gold
+
+  dbt_artifacts:
+    +schema: operations
+    +database: my_voyage_db  # Ensure it lands in MotherDuck
