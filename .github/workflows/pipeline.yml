@@ -75,8 +75,9 @@ jobs:
       - name: 3. Evidence Dashboard Build
         if: always() # Attempt build even if previous steps had partial failures
         run: |
+          rm -f package-lock.json
           npm install
-          ./node_modules/.bin/evidence build
+          npm run build
 
       - name: Upload Evidence Artifact
         uses: actions/upload-pages-artifact@v3
