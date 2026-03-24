@@ -6,7 +6,11 @@ import logging
 
 
 def model(dbt, con):
-    dbt.config(materialized="incremental", unique_key=["mmsi", "dep_time", "arr_time"])
+    dbt.config(
+        materialized="incremental",
+        unique_key=["mmsi", "dep_time", "arr_time"],
+        post_hook="DELETE FROM {{ this }} WHERE duration_hrs <= 0",
+    )
 
     # Suppress noisy multiprocessing warnings common in CI/CD environments
     warnings.filterwarnings("ignore", module="multiprocessing.resource_tracker")
@@ -90,5 +94,8 @@ def model(dbt, con):
     voyages["distance_nm"] = distances
 
     voyages["duration_hrs"] = (voyages["arr_time"] - voyages["dep_time"]).dt.total_seconds() / 3600
+
+    # Final safety filter to ensure no invalid durations persist
+    voyages = voyages[voyages["duration_hrs"] > 0]
 
     return voyages
