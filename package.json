@@ -9,6 +9,6 @@
   },
   "dependencies": {
     "@evidence-dev/duckdb": "^1.0.0",
-    "evidence": "^3.0.0"
+    "evidence": "^1.0.0"
   }
 }
