@@ -2,6 +2,7 @@ import pandas as pd
 import searoute
 import json
 import warnings
+import logging
 
 
 def model(dbt, con):
@@ -57,7 +58,7 @@ def model(dbt, con):
         WHERE prev_port IS NULL OR port_locode != prev_port
     )
     SELECT * FROM legs
-    WHERE arr_locode IS NOT NULL
+    WHERE arr_locode IS NOT NULL AND arr_time > dep_time
     """
 
     # Execute SQL directly on the source relation (Pushdown to DuckDB)
@@ -80,7 +81,8 @@ def model(dbt, con):
             route = searoute.searoute(origin, dest, units="nm")
             geometries.append(json.dumps(route.get("geometry")))
             distances.append(route.get("properties", {}).get("length", 0))
-        except Exception:
+        except Exception as e:
+            logging.error(f"Route calculation failed for {origin} -> {dest}: {e}")
             geometries.append(None)
             distances.append(0)
 
