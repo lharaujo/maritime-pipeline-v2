@@ -39,7 +39,7 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install .
+          pip install . beautifulsoup4
 
       - name: 1. Ingest AIS Data (Extract & Load)
         env: # Inputs mapped to env vars
@@ -75,9 +75,6 @@ jobs:
       - name: 3. Evidence Dashboard Build
         if: always() # Attempt build even if previous steps had partial failures
         run: |
-          rm -f package-lock.json
-          npm install
-          npm run build
           echo "🧹 Cleaning npm environment..."
           rm -rf node_modules package-lock.json
           npm cache clean --force
