@@ -87,11 +87,18 @@ jobs:
           echo "Running evidence sources..."
           npx evidence sources
 
-      - name: Dashboard Build
-        if: always() # Attempt build even if previous steps had partial failures
+      - name: Build Evidence Site
         run: |
-          echo "Running evidence build..."
-          npx evidence build --verbose
+          echo "Building Evidence site..."
+          (while true; do echo "still building..."; sleep 30; done) &
+          npx evidence build
+
+      - name: Debug Evidence Output
+        if: failure()
+        run: |
+          echo "Listing Evidence folder after failed build:"
+          ls -la .evidence || true
+          ls -la .evidence/build || true
 
       - name: Upload Evidence Artifact
         uses: actions/upload-pages-artifact@v3
