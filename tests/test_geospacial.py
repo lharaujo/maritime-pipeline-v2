@@ -6,7 +6,9 @@ from src.geospacial import haversine_distance, to_degrees, to_radians
 
 def test_to_radians():
     """Test conversion of lat/lon dataframe to radians."""
-    df = pl.DataFrame({"latitude": [0.0, 90.0, 180.0], "longitude": [0.0, 180.0, 360.0]})
+    df = pl.DataFrame(
+        {"latitude": [0.0, 90.0, 180.0], "longitude": [0.0, 180.0, 360.0]}
+    )
     rads = to_radians(df)
 
     expected = np.deg2rad(df.select(["latitude", "longitude"]).to_numpy())

@@ -48,7 +48,9 @@ def call_searoute(voyage: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         }
 
 
-def get_sea_path(voyage: Dict[str, Any], route_data: Optional[Dict[str, Any]]) -> Optional[str]:
+def get_sea_path(
+    voyage: Dict[str, Any], route_data: Optional[Dict[str, Any]]
+) -> Optional[str]:
     """Extracts the GeoJSON geometry as a string for storage."""
     if not route_data:
         return None
@@ -66,7 +68,9 @@ def get_path_distance(
 
 
 def get_path_duration(
-    voyage: Dict[str, Any], route_data: Optional[Dict[str, Any]], avg_speed: float = 12.5
+    voyage: Dict[str, Any],
+    route_data: Optional[Dict[str, Any]],
+    avg_speed: float = 12.5,
 ) -> Optional[float]:
     """
     Calculates expected duration in hours based on distance and average speed.

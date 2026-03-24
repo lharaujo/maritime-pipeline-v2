@@ -95,7 +95,9 @@ def scrape_iso_countries(con):
     h2 = soup.find("h2", {"id": "Current_codes"})
     if not h2:
         # Fallback to hardcoded major countries if scraping fails structure
-        logger.error("Could not find 'Current_codes' section. Wiki format may have changed.")
+        logger.error(
+            "Could not find 'Current_codes' section. Wiki format may have changed."
+        )
         return []
 
     table = h2.find_next("table")
@@ -167,15 +169,23 @@ def scrape_ports(con, iso_codes):
                 continue
 
             lat = parse_unece_coord(coords_str.split(" ")[0])
-            lon = parse_unece_coord(coords_str.split(" ")[1]) if " " in coords_str else None
+            lon = (
+                parse_unece_coord(coords_str.split(" ")[1])
+                if " " in coords_str
+                else None
+            )
 
             if lat is not None and lon is not None:
-                country_ports.append({"LOCODE": full_locode, "Name": name, "lat": lat, "lon": lon})
+                country_ports.append(
+                    {"LOCODE": full_locode, "Name": name, "lat": lat, "lon": lon}
+                )
         return country_ports
 
     # Parallel scraping
     with ThreadPoolExecutor(max_workers=10) as executor:
-        future_to_iso = {executor.submit(fetch_country_ports, iso): iso for iso in iso_codes}
+        future_to_iso = {
+            executor.submit(fetch_country_ports, iso): iso for iso in iso_codes
+        }
         for i, future in enumerate(as_completed(future_to_iso)):
             if i % 10 == 0:
                 logger.info(f"Progress: {i}/{len(iso_codes)} countries processed...")
@@ -230,7 +240,9 @@ def ensure_reference_data(con):
         iso_codes = scrape_iso_countries(con)
     else:
         logger.info("✅ Countries table is up to date.")
-        iso_codes = [r[0] for r in con.sql(f"SELECT code FROM {COUNTRIES_TABLE}").fetchall()]
+        iso_codes = [
+            r[0] for r in con.sql(f"SELECT code FROM {COUNTRIES_TABLE}").fetchall()
+        ]
 
     # 2. Check Ports (Update every 6 months)
     try:
@@ -331,7 +343,10 @@ def load_ports_for_kdtree(con):
 
 def fetch_and_filter_ais(year, month, day, tree, port_locodes, port_names):
     date_str = f"{year}-{month:02d}-{day:02d}"
-    url = f"https://coast.noaa.gov/htdata/CMSP/AISDataHandler/{year}/" f"ais-{date_str}.csv.zst"
+    url = (
+        f"https://coast.noaa.gov/htdata/CMSP/AISDataHandler/{year}/"
+        f"ais-{date_str}.csv.zst"
+    )
     logger.info(f"⬇️ Streaming AIS data from {url}...")
 
     csv_buffer = None
@@ -388,7 +403,9 @@ def fetch_and_filter_ais(year, month, day, tree, port_locodes, port_names):
         return None
 
     # Filter Nulls
-    ais = ais.filter(pl.col("latitude").is_not_null() & pl.col("longitude").is_not_null())
+    ais = ais.filter(
+        pl.col("latitude").is_not_null() & pl.col("longitude").is_not_null()
+    )
 
     if ais.height == 0:
         return None
@@ -424,7 +441,17 @@ def fetch_and_filter_ais(year, month, day, tree, port_locodes, port_names):
                 filtered_ais["base_date_time"].str.to_datetime(strict=False),
             ),  # Renaming base_date_time
         ]
-    ).select(["mmsi", "imo", "vessel_name", "latitude", "longitude", "dep_time", "port_locode"])
+    ).select(
+        [
+            "mmsi",
+            "imo",
+            "vessel_name",
+            "latitude",
+            "longitude",
+            "dep_time",
+            "port_locode",
+        ]
+    )
 
     logger.info(f"✅ Retained {filtered_ais.height} relevant pings.")
     return filtered_ais
@@ -463,7 +490,9 @@ def process_date(target_date, tree, locodes, names):
             )
 
             # Insert Data
-            con.sql(f"INSERT INTO {RAW_AIS_TABLE} SELECT *, CURRENT_TIMESTAMP FROM df_filtered")
+            con.sql(
+                f"INSERT INTO {RAW_AIS_TABLE} SELECT *, CURRENT_TIMESTAMP FROM df_filtered"
+            )
             logger.info(f"🎉 Ingestion Complete for {target_date.date()}.")
         else:
             logger.info(f"⚠️ No data to ingest for {target_date.date()}.")
@@ -512,9 +541,9 @@ def main():
         if args.month == 12:
             end_date = datetime(args.year, 12, 31, tzinfo=timezone.utc)
         else:
-            end_date = datetime(args.year, args.month + 1, 1, tzinfo=timezone.utc) - timedelta(
-                days=1
-            )
+            end_date = datetime(
+                args.year, args.month + 1, 1, tzinfo=timezone.utc
+            ) - timedelta(days=1)
     elif args.year:
         start_date = datetime(args.year, 1, 1, tzinfo=timezone.utc)
         end_date = datetime(args.year, 12, 31, tzinfo=timezone.utc)
@@ -538,7 +567,10 @@ def main():
 
     # Process in parallel (Max 2 workers to prevent OOM on 7GB RAM runners)
     with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = [executor.submit(process_date, d, tree, locodes, names) for d in dates_to_process]
+        futures = [
+            executor.submit(process_date, d, tree, locodes, names)
+            for d in dates_to_process
+        ]
         for fut in as_completed(futures):
             try:
                 fut.result()

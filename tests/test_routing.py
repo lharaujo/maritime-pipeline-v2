@@ -69,7 +69,10 @@ def test_call_searoute_fallback(mock_sr, sample_row):
     assert result["geometry"]["type"] == "LineString"
     # Should contain exactly 2 points (Start -> End)
     assert len(result["geometry"]["coordinates"]) == 2
-    assert result["geometry"]["coordinates"][0] == [sample_row["dep_lon"], sample_row["dep_lat"]]
+    assert result["geometry"]["coordinates"][0] == [
+        sample_row["dep_lon"],
+        sample_row["dep_lat"],
+    ]
     # Should have calculated distance in 'properties' -> 'length'
     assert result["properties"]["length"] > 0
     assert result["properties"]["units"] == "nm"
