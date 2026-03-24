@@ -8,9 +8,7 @@
     "sources": "evidence sources"
   },
   "dependencies": {
-    "@evidence-dev/duckdb": "^1.0.0"
-  },
-  "devDependencies": {
-    "evidence": "^2.0.0"
+    "@evidence-dev/duckdb": "^1.0.0",
+    "evidence": "^3.0.0"
   }
 }
