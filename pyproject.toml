@@ -1,46 +1,28 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ais-voyage-engine"
-version = "0.1.0"
-description = "A cloud-native AIS data pipeline using MotherDuck, dbt, and Polars."
-readme = "README.md"
-requires-python = ">=3.12"
-authors = [{ name = "Your Name", email = "your.email@example.com" }]
+name = "maritime-pipeline"
+version = "1.0.0"
+description = "Maritime data pipeline with AIS ingestion and dbt transformation"
+requires-python = ">=3.11"
 dependencies = [
-    "polars>=0.20.0",
-    "duckdb==1.4.4",
-    "dbt-duckdb>=1.8.0",
-    "pandas>=2.2.0",
-    "pyarrow>=15.0.0",
-    "requests>=2.31.0",
-    "numpy>=1.26.0",
-    "searoute>=1.1.0",
-    "zstandard>=0.22.0",
-    "scipy>=1.17.1",
-    "python-dotenv>=1.2.2",
-    "beautifulsoup4>=4.14.1"
+    "beautifulsoup4",
+    "dbt-duckdb",
+    "duckdb",
+    "numpy",
+    "pandas",
+    "polars",
+    "requests",
+    "scipy",
+    "searoute",
+    "zstandard"
 ]
 
 [project.optional-dependencies]
 dev = [
-    "black==24.3.0",
-    "flake8==7.0.0",
-    "pytest>=8.0.0",
-    "isort>=5.13.0",
-    "pre-commit>=3.6.0",
+    "black",
+    "flake8",
+    "pytest"
 ]
-
-[tool.black]
-line-length = 100
-target-version = ['py312']
-include = '\.pyi?$'
-
-[tool.isort]
-profile = "black"
-line_length = 100
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]

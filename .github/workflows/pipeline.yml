@@ -39,7 +39,7 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install . beautifulsoup4
+          pip install .
 
       - name: 1. Ingest AIS Data (Extract & Load)
         env: # Inputs mapped to env vars
@@ -78,6 +78,19 @@ jobs:
           rm -f package-lock.json
           npm install
           npm run build
+          echo "🧹 Cleaning npm environment..."
+          rm -rf node_modules package-lock.json
+          npm cache clean --force
+
+          echo "📦 Installing dependencies..."
+          npm install --loglevel=error
+
+          echo "🔍 DEBUG: Listing executables in .bin:"
+          ls -la node_modules/.bin || echo "⚠️ .bin folder not found"
+
+          echo "🚀 Building Dashboard..."
+          # Bypass npm run script and use npx to locate the binary reliably
+          npx --no-install evidence build
 
       - name: Upload Evidence Artifact
         uses: actions/upload-pages-artifact@v3
