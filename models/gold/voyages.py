@@ -1,10 +1,14 @@
 import pandas as pd
 import searoute
 import json
+import warnings
 
 
 def model(dbt, con):
     dbt.config(materialized="incremental", unique_key=["mmsi", "dep_time", "arr_time"])
+
+    # Suppress noisy multiprocessing warnings common in CI/CD environments
+    warnings.filterwarnings("ignore", module="multiprocessing.resource_tracker")
 
     # 1. Incremental Logic
     # If the table exists, find the latest arrival time to only process new voyages.
