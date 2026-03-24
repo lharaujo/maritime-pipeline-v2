@@ -22,6 +22,9 @@ models:
     gold:
       +materialized: incremental
       +schema: gold
+      # Config for specific models
+      voyages:
+        +post-hook: "DELETE FROM {{ this }} WHERE duration_hrs <= 0"
 
   dbt_artifacts:
     +schema: operations

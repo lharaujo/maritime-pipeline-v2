@@ -9,7 +9,6 @@ def model(dbt, con):
     dbt.config(
         materialized="incremental",
         unique_key=["mmsi", "dep_time", "arr_time"],
-        post_hook="DELETE FROM {{ this }} WHERE duration_hrs <= 0",
     )
 
     # Suppress noisy multiprocessing warnings common in CI/CD environments
