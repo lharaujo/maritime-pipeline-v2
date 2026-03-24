@@ -7,7 +7,7 @@
     "sources": "evidence sources"
   },
   "dependencies": {
-    "@evidence-dev/core": "^3.0.0",
+    "evidence": "latest",
     "@evidence-dev/duckdb": "^1.0.0"
   }
 }
