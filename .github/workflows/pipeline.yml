@@ -76,7 +76,7 @@ jobs:
         if: always() # Attempt build even if previous steps had partial failures
         run: |
           npm install
-          npx evidence build
+          npx evidence build --verbose
 
       - name: Upload Evidence Artifact
         uses: actions/upload-pages-artifact@v3
