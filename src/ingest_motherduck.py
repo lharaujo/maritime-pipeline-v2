@@ -410,6 +410,11 @@ def fetch_and_filter_ais(year, month, day, tree, port_locodes, port_names):
     valid_idx = idx[mask]
     filtered_ais = ais.filter(mask)
 
+    # Explicitly free the large raw dataframe from memory
+    del ais
+    del dist
+    del idx
+
     # Enrich with Port Info
     filtered_ais = filtered_ais.with_columns(
         [

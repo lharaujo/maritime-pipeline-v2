@@ -31,12 +31,10 @@ def model(dbt, con):
     # We execute SQL on the connection to filter *before* loading data into memory/Polars
     source_rel = dbt.ref("stg_ais")
     if cutoff_filter:
-        df = source_rel.filter(cutoff_filter).pl()
-    else:
-        df = source_rel.pl()
+        source_rel = source_rel.filter(cutoff_filter)
 
-    if df.height == 0:
-        return df.to_pandas()
+    # We avoid pulling data into Polars/Python memory here.
+    # Instead, we pass the relation directly to the next SQL step.
 
     # 3. Window Functions (Stitching)
     # We identify port changes using SQL on the Polars frame via DuckDB
@@ -45,7 +43,7 @@ def model(dbt, con):
             SELECT
                 *,
                 LAG(port_locode) OVER (PARTITION BY mmsi ORDER BY dep_time) as prev_port
-            FROM df_view
+            FROM source_view
     ),
     legs AS (
         SELECT
@@ -62,31 +60,33 @@ def model(dbt, con):
     WHERE arr_locode IS NOT NULL
     """
 
-    # Register Polars DF as view for DuckDB
-    con.register("df_view", df)
-    voyages = con.execute(q).fetch_df()  # Pandas for searoute compatibility
+    # Execute SQL directly on the source relation (Pushdown to DuckDB)
+    voyages = source_rel.query("source_view", q).df()
 
     if voyages.empty:
         return voyages
 
     # 4. Enrichment (SeaRoute)
-    def get_route(row):
+    # Optimized: Use list comprehension + zip instead of .apply(axis=1) to save memory
+    geometries = []
+    distances = []
+
+    for d_lon, d_lat, a_lon, a_lat in zip(
+        voyages["dep_lon"], voyages["dep_lat"], voyages["arr_lon"], voyages["arr_lat"]
+    ):
         try:
-            origin = [row["dep_lon"], row["dep_lat"]]
-            dest = [row["arr_lon"], row["arr_lat"]]
+            origin = [d_lon, d_lat]
+            dest = [a_lon, a_lat]
             route = searoute.searoute(origin, dest, units="nm")
-            geometry = json.dumps(route.get("geometry"))
-            dist = route.get("properties", {}).get("length", 0)
-            return pd.Series([geometry, dist])
+            geometries.append(json.dumps(route.get("geometry")))
+            distances.append(route.get("properties", {}).get("length", 0))
         except Exception:
-            return pd.Series([None, 0])
+            geometries.append(None)
+            distances.append(0)
 
-    enrichment = voyages.apply(get_route, axis=1)
-    enrichment.columns = ["route_geometry", "distance_nm"]
+    voyages["route_geometry"] = geometries
+    voyages["distance_nm"] = distances
 
-    final_df = pd.concat([voyages, enrichment], axis=1)
-    final_df["duration_hrs"] = (
-        final_df["arr_time"] - final_df["dep_time"]
-    ).dt.total_seconds() / 3600
+    voyages["duration_hrs"] = (voyages["arr_time"] - voyages["dep_time"]).dt.total_seconds() / 3600
 
-    return final_df
+    return voyages
