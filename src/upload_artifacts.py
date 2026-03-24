@@ -29,9 +29,7 @@ def upload_metadata():
                     "unique_id": res.get("unique_id"),
                     "status": res.get("status"),
                     "execution_time": res.get("execution_time"),
-                    "rows_affected": res.get("adapter_response", {}).get(
-                        "rows_affected"
-                    ),
+                    "rows_affected": res.get("adapter_response", {}).get("rows_affected"),
                     "message": res.get("message"),
                 }
             )

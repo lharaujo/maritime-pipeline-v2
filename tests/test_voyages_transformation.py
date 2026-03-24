@@ -124,9 +124,7 @@ def test_enrichment_logic(mock_searoute):
     voyages["route_geometry"] = geometries
     voyages["distance_nm"] = distances
 
-    voyages["duration_hrs"] = (
-        voyages["arr_time"] - voyages["dep_time"]
-    ).dt.total_seconds() / 3600
+    voyages["duration_hrs"] = (voyages["arr_time"] - voyages["dep_time"]).dt.total_seconds() / 3600
 
     # Final safety filter
     voyages = voyages[voyages["duration_hrs"] > 0]

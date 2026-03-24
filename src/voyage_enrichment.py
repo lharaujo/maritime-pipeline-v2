@@ -48,9 +48,7 @@ def call_searoute(voyage: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         }
 
 
-def get_sea_path(
-    voyage: Dict[str, Any], route_data: Optional[Dict[str, Any]]
-) -> Optional[str]:
+def get_sea_path(voyage: Dict[str, Any], route_data: Optional[Dict[str, Any]]) -> Optional[str]:
     """Extracts the GeoJSON geometry as a string for storage."""
     if not route_data:
         return None
