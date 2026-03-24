@@ -4,6 +4,8 @@ import argparse
 import logging
 import time
 import io
+import pickle
+from pathlib import Path
 import zstandard as zstd
 import polars as pl
 import numpy as np
@@ -292,6 +294,22 @@ def ensure_reference_data(con):
 
 def load_ports_for_kdtree(con):
     """Loads ports into memory for KDTree filtering."""
+    cache_file = Path("ports_kdtree.pkl")
+
+    # 1. Try loading from local disk cache first
+    if cache_file.exists():
+        # Cache valid for 24 hours
+        if (time.time() - cache_file.stat().st_mtime) < 86400:
+            try:
+                with open(cache_file, "rb") as f:
+                    data = pickle.load(f)
+                logger.info("✅ Loaded KDTree from local disk cache.")
+                return data["tree"], data["locodes"], data["names"]
+            except Exception:
+                logger.warning("⚠️ Cache file corrupted, rebuilding...")
+
+    # 2. Build from MotherDuck if cache missing or stale
+    logger.info("🏗️ Building KDTree from MotherDuck ports table...")
     df = con.sql(f"SELECT LOCODE, Name, lat, lon FROM {PORTS_TABLE}").pl()
 
     port_locodes = df["LOCODE"].to_numpy()
@@ -299,6 +317,15 @@ def load_ports_for_kdtree(con):
     # Convert to radians for distance calc
     coords = np.deg2rad(df[["lat", "lon"]].to_numpy())
     tree = KDTree(coords)
+
+    # 3. Save to cache
+    try:
+        with open(cache_file, "wb") as f:
+            pickle.dump({"tree": tree, "locodes": port_locodes, "names": port_names}, f)
+        logger.info("💾 Saved KDTree to local disk cache.")
+    except Exception as e:
+        logger.warning(f"⚠️ Could not save KDTree cache: {e}")
+
     return tree, port_locodes, port_names
 
 

@@ -9,7 +9,7 @@ def model(dbt, con):
     # 1. Incremental Logic
     # If the table exists, find the latest arrival time to only process new voyages.
     # We look back 14 days to ensure we catch the start of voyages that just completed.
-    cutoff_sql = ""
+    cutoff_filter = None
     if dbt.is_incremental:
         try:
             # 'dbt.this' refers to the current table (main_gold.voyages)
@@ -18,15 +18,18 @@ def model(dbt, con):
             res = con.execute(f"SELECT MAX(arr_time) FROM {target_name}").fetchone()
             if res and res[0]:
                 cutoff_date = res[0] - pd.Timedelta(days=14)
-                cutoff_sql = f"WHERE dep_time >= '{cutoff_date}'"
+                cutoff_filter = f"dep_time >= '{cutoff_date}'"
         except Exception:
             # Table likely doesn't exist yet, run full load
             pass
 
     # 2. Load Staging Data (Filtered)
     # We execute SQL on the connection to filter *before* loading data into memory/Polars
-    source_table = dbt.ref("stg_ais")
-    df = con.sql(f"SELECT * FROM {source_table} {cutoff_sql}").pl()
+    source_rel = dbt.ref("stg_ais")
+    if cutoff_filter:
+        df = source_rel.filter(cutoff_filter).pl()
+    else:
+        df = source_rel.pl()
 
     if df.height == 0:
         return df.to_pandas()
