@@ -25,6 +25,9 @@ models:
       # Config for specific models
       voyages:
         +post-hook: "DELETE FROM {{ this }} WHERE duration_hrs <= 0"
+    preentation:
+      +materialized: table
+      +schema: analytics
 
   dbt_artifacts:
     +schema: operations
